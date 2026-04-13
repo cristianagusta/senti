@@ -25,10 +25,12 @@ app.add_middleware(
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 HF_API_KEY = os.getenv("HF_API_KEY")
 
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = ""
+
 youtube = googleapiclient.discovery.build(
     "youtube",
     "v3",
-    developerKey=YOUTUBE_API_KEY,
+    developerKey=DEVELOPER_KEY,
     cache_discovery=False
 )
 
