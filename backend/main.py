@@ -1,18 +1,24 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import motor.motor_asyncio
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List
 from collections import Counter
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-import asyncio
 import googleapiclient.discovery
 import re
 import time
 import unicodedata
+import requests
 from fastapi.middleware.cors import CORSMiddleware
 
-client = motor.motor_asyncio.AsyncIOMotorClient("mongodb://localhost:27017")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+MONGO_URI = os.getenv("MONGO_URI")
+HF_API_KEY = os.getenv("HF_API_KEY")
+
+client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
 db = client.thesis_sentiment 
 raw_collection = db.raw_comments
 analysis_collection = db.analyzed_results
@@ -26,17 +32,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Konfigurasi YouTube API
-DEVELOPER_KEY = "AIzaSyB0NqKUD6O-P9dmNXx_klgZDkCHzWfPmI0" 
-youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=DEVELOPER_KEY)
+youtube = googleapiclient.discovery.build(
+    "youtube", "v3", developerKey=YOUTUBE_API_KEY
+)
 
-# Konfigurasi IndoBERT
-PRETRAINED_MODEL = "mdhugol/indonesia-bert-sentiment-classification"
-LABEL_INDEX = {'LABEL_0': 'positive', 'LABEL_1': 'neutral', 'LABEL_2': 'negative'}
-classifier = None
-generator_model = None
-generator_tokenizer = None
+HF_API_URL = "https://router.huggingface.co/hf-inference/models/mdhugol/indonesia-bert-sentiment-classification"
 
+LABEL_INDEX = {
+    "LABEL_0": "positive",
+    "LABEL_1": "neutral",
+    "LABEL_2": "negative"
+}
 
 def clean_and_normalize(text):
     if not text:
@@ -55,20 +61,26 @@ def get_video_id(url: str):
         return match.group(1)
     return None
 
-def load_model():
-    global classifier
-    print("--- Memuat Model IndoBERT... ---")
-    model = AutoModelForSequenceClassification.from_pretrained(PRETRAINED_MODEL)
-    tokenizer = AutoTokenizer.from_pretrained(PRETRAINED_MODEL)
-    classifier = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
-    print("--- Model Siap! ---")
+def classify_batch(texts):
+    headers = {
+        "Authorization": f"Bearer {HF_API_KEY}"
+    }
 
- #def load_generator():
-  #  global generator_model, generator_tokenizer
-   # print("--- Memuat Model Conclusion (FLAN-T5)... ---")
-    #generator_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
-    #generator_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
-    #print("--- Model Conclusion Siap! ---")
+    response = requests.post(
+        HF_API_URL,
+        headers=headers,
+        json={"inputs": texts}
+    )
+
+    data = response.json()
+
+    if isinstance(data, dict) and "error" in data:
+        if "loading" in data["error"].lower():
+            time.sleep(5)
+            return classify_batch(texts)
+        raise HTTPException(status_code=500, detail=data["error"])
+
+    return data
 
 def generate_conclusion(counts):
     total = sum(counts.values())
@@ -79,10 +91,6 @@ def generate_conclusion(counts):
     percentages = {
         k: (v / total) * 100 for k, v in counts.items()
     }
-
-    pos_pct = percentages.get("positive", 0)
-    neg_pct = percentages.get("negative", 0)
-    neu_pct = percentages.get("neutral", 0)
 
     max_label = max(counts, key=counts.get)
     max_pct = percentages[max_label]
@@ -101,11 +109,6 @@ def generate_conclusion(counts):
             return f"The sentiment tends to be negative ({max_pct:.1f}%), but it is not dominant due to varied opinions."
         else:
             return f"The sentiment tends to be neutral ({max_pct:.1f}%), with a relatively diverse distribution of opinions."
-
-@app.on_event("startup")
-async def startup():
-    await asyncio.to_thread(load_model)
-    #await asyncio.to_thread(load_generator)
 
 class URLRequest(BaseModel):
     url: str
@@ -131,11 +134,19 @@ async def scrape_youtube_api(request: URLRequest):
             response = youtube_request.execute()
 
             for item in response.get('items', []):
-                comment_text = item['snippet']['topLevelComment']['snippet']['textDisplay']
-                cleaned_text = clean_and_normalize(comment_text)
+                top_comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
+                cleaned_top = clean_and_normalize(top_comment)
 
-                if cleaned_text:
-                    cleaned_comments.append(cleaned_text)
+                if cleaned_top:
+                    cleaned_comments.append(cleaned_top)
+
+                if "replies" in item:
+                    for reply in item["replies"]["comments"]:
+                        reply_text = reply["snippet"]["textDisplay"]
+                        cleaned_reply = clean_and_normalize(reply_text)
+
+                        if cleaned_reply:
+                            cleaned_comments.append(cleaned_reply)
 
             next_page_token = response.get('nextPageToken')
             if not next_page_token:
@@ -176,41 +187,73 @@ async def analyze_sentiment(request: URLRequest):
     if not raw_data:
         raise HTTPException(status_code=404, detail="Data belum di-scrape.")
 
-    if classifier is None:
-        raise HTTPException(status_code=500, detail="Model Classifier belum siap.")
-
     texts = raw_data.get("comments", [])
     labels = []
     processed = []
 
-    batch_size = 32
+    batch_size = 5
 
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i+batch_size]
 
-        results = await asyncio.to_thread(
-            classifier,
-            batch,
-            truncation=True,
-            max_length=512
-        )
+        try:
+            results = classify_batch(batch)
 
-        for res in results:
-            label = LABEL_INDEX.get(res["label"], "unknown")
+            if not isinstance(results, list) or len(results) != len(batch):
+                raise Exception("Mismatch results")
+
+        except:
+            results = []
+            for text in batch:
+                try:
+                    single_result = classify_batch([text])
+
+                    if isinstance(single_result, list):
+                        results.append(single_result[0])
+                    else:
+                        results.append(single_result)
+
+                except:
+                    results.append(None)
+
+        for j, text in enumerate(batch):
+            try:
+                res = results[j]
+
+                if res is None:
+                    raise Exception()
+
+                if isinstance(res, dict):
+                    res = [res]
+
+                top = max(res, key=lambda x: x["score"])
+                label = LABEL_INDEX.get(top["label"], "unknown")
+
+            except:
+                label = "unknown"
+
             labels.append(label)
             processed.append({
+                "text": text,
                 "label": label,
-                "confidence": f"{res['score']*100:.2f}%"
+                "confidence": round(top["score"] * 100, 2)
             })
 
-    counts = Counter(labels)
-    overall = counts.most_common(1)[0][0] if counts else "N/A"
+    counts_raw = Counter(labels)
+
+    counts = {
+        "positive": counts_raw.get("positive", 0),
+        "neutral": counts_raw.get("neutral", 0),
+        "negative": counts_raw.get("negative", 0)
+    }
+
+    overall = max(counts, key=counts.get)
 
     total = len(texts)
 
     percentages = {
         k: round((v / total) * 100, 2) for k, v in counts.items()
-    } if total > 0 else {}
+    }
 
     conclusion = generate_conclusion(counts)
 
@@ -219,7 +262,7 @@ async def analyze_sentiment(request: URLRequest):
         "summary": {
             "total": total,
             "overall": overall,
-            "counts": dict(counts),
+            "counts": counts,
             "percentages": percentages,
             "conclusion": conclusion
         },
