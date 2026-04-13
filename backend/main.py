@@ -14,7 +14,7 @@ import unicodedata
 import requests
 from fastapi.middleware.cors import CORSMiddleware
 
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+DEVELOPER_KEY = os.getenv("DEVELOPER_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 HF_API_KEY = os.getenv("HF_API_KEY")
 
