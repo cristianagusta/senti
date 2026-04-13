@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import './App.css'
+import { API_URL } from './config'
 
 function App() {
   const [val, setVal] = useState("")
@@ -40,13 +41,7 @@ function App() {
       const id = getYoutubeVideoId(val)
       setVideoId(id)
 
-      await fetch("http://127.0.0.1:8000/scrapping", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: val }),
-      })
-
-      const response = await fetch("http://127.0.0.1:8000/analyze", {
+      const response = await fetch(`${API_URL}/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: val }),
@@ -69,7 +64,7 @@ function App() {
       })
 
     } catch (error) {
-      console.error("Error:", error)
+      console.error(error)
       setResult({ message: "Something went wrong" })
     } finally {
       setLoading(false)
