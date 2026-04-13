@@ -33,7 +33,10 @@ app.add_middleware(
 )
 
 youtube = googleapiclient.discovery.build(
-    "youtube", "v3", developerKey=YOUTUBE_API_KEY
+    "youtube",
+    "v3",
+    developerKey=DEVELOPER_KEY,
+    cache_discovery=False
 )
 
 HF_API_URL = "https://router.huggingface.co/hf-inference/models/mdhugol/indonesia-bert-sentiment-classification"
