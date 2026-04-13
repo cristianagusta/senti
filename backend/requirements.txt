@@ -2,6 +2,6 @@ fastapi
 uvicorn
 motor
 pydantic
-transformers
-torch
 google-api-python-client
+requests
+python-dotenv
