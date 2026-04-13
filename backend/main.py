@@ -22,7 +22,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+DEVELOPER_KEY = os.getenv("DEVELOPER_KEY")
 HF_API_KEY = os.getenv("HF_API_KEY")
 
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = ""
