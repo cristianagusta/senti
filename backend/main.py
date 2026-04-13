@@ -16,7 +16,7 @@ app = FastAPI(title="YouTube Sentiment API (HF API Version)")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://senti-mocha.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
