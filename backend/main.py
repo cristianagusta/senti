@@ -22,13 +22,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+DEVELOPER_KEY = os.getenv("DEVELOPER_KEY")
 HF_API_KEY = os.getenv("HF_API_KEY")
 
 youtube = googleapiclient.discovery.build(
     "youtube",
     "v3",
-    developerKey=YOUTUBE_API_KEY,
+    developerKey=DEVELOPER_KEY,
     cache_discovery=False
 )
 
