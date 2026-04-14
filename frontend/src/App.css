@@ -118,12 +118,29 @@ body {
   color: black;
 }
 
-.value {
+
+.value.Positive {
   margin-top: 0px;
   margin-left: 10px;
   font-size: 30px;
+  color: green;
   font-weight: bold;
-  color: black;
+}
+
+.value.Negative {
+  margin-top: 0px;
+  margin-left: 10px;
+  font-size: 30px;
+  color: red;
+  font-weight: bold;
+}
+
+.value.Neutral {
+  margin-top: 0px;
+  margin-left: 10px;
+  font-size: 30px;
+  color: gray;
+  font-weight: bold;
 }
 
 .breakdown {
@@ -157,6 +174,7 @@ body {
 .section-title {
   margin-top: 10px;
   font-weight: bold;
+  color: #737171;
 }
 
 .summary {
