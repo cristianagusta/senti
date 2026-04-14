@@ -2,19 +2,19 @@ import { useState } from 'react'
 import './App.css'
 import { API_URL } from './config'
 
+import logo from './assets/logo.png'
+import bg from './assets/background.png'
+import positiveIcon from './assets/positive.png'
+import negativeIcon from './assets/negative.png'
+import neutralIcon from './assets/neutral.png'
+
 function App() {
   const [val, setVal] = useState("")
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [videoId, setVideoId] = useState(null)
 
-  const changeVal = (event) => {
-    setVal(event.target.value)
-  }
-
-  const isValidYoutube = (url) => {
-    return url.includes("youtube.com/watch?")
-  }
+  const isValidYoutube = (url) => url.includes("youtube.com/watch?")
 
   const getYoutubeVideoId = (url) => {
     try {
@@ -25,14 +25,18 @@ function App() {
     }
   }
 
-  const isValid = isValidYoutube(val)
-
   const refreshPage = () => {
     window.location.reload()
   }
 
+  const getIcon = (sentiment) => {
+    if (sentiment === "Positive") return positiveIcon
+    if (sentiment === "Negative") return negativeIcon
+    return neutralIcon
+  }
+
   const sendRequest = async () => {
-    if (!isValid) return
+    if (!isValidYoutube(val)) return
 
     try {
       setLoading(true)
@@ -49,126 +53,102 @@ function App() {
 
       const data = await response.json()
 
-      const sentiment = data.summary.overall
       const counts = data.summary.counts
       const total = data.summary.total
-      const conclusion = data.summary.conclusion
 
       setResult({
-        sentiment,
+        sentiment: data.summary.overall,
         total,
-        conclusion,
-        positive: counts.positive || 0,
-        neutral: counts.neutral || 0,
-        negative: counts.negative || 0,
+        conclusion: data.summary.conclusion,
+        Positive: counts.Positive || 0,
+        Neutral: counts.Neutral || 0,
+        Negative: counts.Negative || 0,
       })
 
-    } catch (error) {
-      console.error(error)
+    } catch {
       setResult({ message: "Something went wrong" })
     } finally {
       setLoading(false)
-      setVal("")
     }
   }
 
+  const percentage = (val) => result ? parseFloat(((val / result.total) * 100).toFixed(1)) : 0
+
   return (
-    <div className="chat-container">
+    <div className="app-container">
 
-      <div className="header" onClick={refreshPage}>
-        <h1 className="logo">Senti</h1>
+      <img src={logo} className="logo" onClick={refreshPage} />
+      <p className="slogan">Turn URL into Sentiment.</p>
+
+      <div className="input-outer">
+
+        {!isValidYoutube(val) && val !== "" && (
+          <p className="error-text">Invalid YouTube URL</p>
+        )}
+
+        <div className="input-row">
+          <input
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            placeholder="Paste Your Youtube URL Here"
+          />
+
+          <button onClick={sendRequest} disabled={loading}>
+            {loading ? <div className="btn-spinner"></div> : "→"}
+          </button>
+        </div>
+
       </div>
 
-      <div className="chat-body">
+      {result && (
+        <div className="result-box">
 
-        {!loading && !result && (
-          <div className="slogan-container">
-            <p className="slogan">
-              Turn your URL into Sentiment
-            </p>
-          </div>
-        )}
-
-        {loading && (
-          <div className="result-box loading-box">
-            <div className="spinner"></div>
-            <p className="loading-text">
-              Analyzing<span className="dots"></span>
-            </p>
-          </div>
-        )}
-
-        {result && result.message && !loading && (
-          <div className="result-box">
-            <p>{result.message}</p>
-          </div>
-        )}
-
-        {result && result.sentiment && !loading && (
-          <div className="result-box">
-
-            {videoId && (
-              <div className="player-wrapper">
-                <iframe
-                  className="player"
-                  src={`https://www.youtube.com/embed/${videoId}`}
-                  title="YouTube player"
-                  frameBorder="0"
-                  allowFullScreen
-                ></iframe>
-              </div>
-            )}
-
-            <p className="main-result">
-              The majority of sentiment is{" "}
-              <strong>
-                {result.sentiment.charAt(0).toUpperCase() + result.sentiment.slice(1)}
-              </strong>
-            </p>
-
-            <div className="stats">
-              <p>Total Comments: {result.total}</p>
-              <p>Positive: {result.positive}</p>
-              <p>Neutral: {result.neutral}</p>
-              <p>Negative: {result.negative}</p>
-            </div>
-
-            <p className="conclusion">
-              The conclusion is{" "}
-              {result.conclusion.charAt(0).toLowerCase() + result.conclusion.slice(1)}
-            </p>
-          </div>
-        )}
-      </div>
-
-      <div className="chat-input">
-        <div className="input-wrapper">
-
-          {!isValid && val !== "" && (
-            <p className="error-text">
-              Submitted URL is not Youtube's
-            </p>
+          {videoId && (
+            <iframe
+              className="player"
+              src={`https://www.youtube.com/embed/${videoId}`}
+              allowFullScreen
+            />
           )}
 
-          <div className="input-row">
-            <input
-              type="text"
-              placeholder="Paste URL..."
-              value={val}
-              onChange={changeVal}
-            />
+          <hr />
 
-            <button onClick={sendRequest} disabled={loading || !isValid}>
-              →
-            </button>
+          <div className="overall-section">
+            <img src={getIcon(result.sentiment)} className="emoji" />
+            <div>
+              <p className="label">Overall Sentiment</p>
+              <p className="value">{result.sentiment}</p>
+            </div>
           </div>
 
-          <p className="note-text">
-            Submitted URL should be YouTube's
-          </p>
+          <hr />
+
+          <div className="breakdown">
+            <p className="section-title">Sentiment Breakdown</p>
+
+            {["Positive", "Negative", "Neutral"].map((type) => (
+              <div key={type} className="bar-group">
+                <div className="bar-header">
+                  <span>{type}</span>
+                  <span>{percentage(result[type])}%</span>
+                </div>
+                <div className="bar-bg">
+                  <div
+                    className={`bar-fill ${type}`}
+                    style={{ width: `${percentage(result[type])}%` }}
+                  ></div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="summary">
+            <p className="section-title">Summary</p>
+            <p>{result.conclusion}</p>
+          </div>
 
         </div>
-      </div>
+      )}
 
     </div>
   )
