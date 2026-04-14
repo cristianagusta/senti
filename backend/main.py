@@ -16,30 +16,28 @@ app = FastAPI(title="YouTube Sentiment API (HF API Version)")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://senti-mocha.vercel.app"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-DEVELOPER_KEY = os.getenv("DEVELOPER_KEY")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 HF_API_KEY = os.getenv("HF_API_KEY")
-
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = ""
 
 youtube = googleapiclient.discovery.build(
     "youtube",
     "v3",
-    developerKey=DEVELOPER_KEY,
+    developerKey=YOUTUBE_API_KEY,
     cache_discovery=False
 )
 
 HF_URL = "https://router.huggingface.co/hf-inference/models/mdhugol/indonesia-bert-sentiment-classification"
 
 LABEL_INDEX = {
-    "LABEL_0": "positive",
-    "LABEL_1": "neutral",
-    "LABEL_2": "negative"
+    "LABEL_0": "Positive",
+    "LABEL_1": "Neutral",
+    "LABEL_2": "Negative"
 }
 
 class URLRequest(BaseModel):
@@ -87,9 +85,9 @@ def generate_conclusion(counts):
     max_pct = percentages[max_label]
 
     if max_pct >= 50:
-        if max_label == "positive":
+        if max_label == "Positive":
             return f"The majority of users express positive sentiment ({max_pct:.1f}%), indicating that the video is generally well received."
-        elif max_label == "negative":
+        elif max_label == "Negative":
             return f"The majority of users express negative sentiment ({max_pct:.1f}%), suggesting dissatisfaction with the video."
         else:
             return f"The majority of users express neutral sentiment ({max_pct:.1f}%), indicating a generally moderate response."
