@@ -25,6 +25,16 @@ function App() {
     }
   }
 
+  const getSentimentClass = (sentiment) => {
+    if (!sentiment) return "Neutral";
+
+    const s = sentiment;
+
+    if (s.includes("Positive")) return "Positive";
+    if (s.includes("Negative")) return "Negative";
+    return "Neutral";
+  };
+
   const refreshPage = () => {
     window.location.reload()
   }
@@ -117,7 +127,9 @@ function App() {
             <img src={getIcon(result.sentiment)} className="emoji" />
             <div>
               <p className="label">Overall Sentiment</p>
-              <p className="value">{result.sentiment}</p>
+              <p className={`value ${getSentimentClass(result.sentiment)}`}>
+                {result.sentiment}
+              </p>
             </div>
           </div>
 
