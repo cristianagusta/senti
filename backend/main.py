@@ -5,14 +5,17 @@ from pydantic import BaseModel
 from collections import Counter
 import googleapiclient.discovery
 import re
-import time
 import unicodedata
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from pymongo import MongoClient
+from datetime import datetime, timedelta
+import bcrypt
+import random
 
 load_dotenv()
 
-app = FastAPI(title="YouTube Sentiment API (HF API Version)")
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +27,13 @@ app.add_middleware(
 
 DEVELOPER_KEY = os.getenv("DEVELOPER_KEY")
 HF_API_KEY = os.getenv("HF_API_KEY")
+MONGO_URL = os.getenv("MONGO_URL")
+
+client = MongoClient(MONGO_URL)
+db = client["senti"]
+
+users_col = db["users"]
+history_col = db["history"]
 
 youtube = googleapiclient.discovery.build(
     "youtube",
@@ -33,6 +43,7 @@ youtube = googleapiclient.discovery.build(
 )
 
 HF_URL = "https://router.huggingface.co/hf-inference/models/mdhugol/indonesia-bert-sentiment-classification"
+session = requests.Session()
 
 LABEL_INDEX = {
     "LABEL_0": "Positive",
@@ -40,102 +51,186 @@ LABEL_INDEX = {
     "LABEL_2": "Negative"
 }
 
+MAX_COMMENTS = 150
+RAW_LIMIT = 500
+BATCH_SIZE = 5
+
 class URLRequest(BaseModel):
     url: str
 
-def clean_and_normalize(text):
+class AuthRequest(BaseModel):
+    email: str
+    password: str
+    username: str | None = None
+
+class SaveRequest(BaseModel):
+    user: str
+    videoId: str
+    result: dict
+
+def clean(text):
     if not text:
         return ""
-    text = unicodedata.normalize('NFKD', text)
-    text = text.encode('ascii', 'ignore').decode('utf-8')
-    text = text.replace('ß', 's')
-    text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text)
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("utf-8")
+    text = re.sub(r"[^a-zA-Z0-9\s]", " ", text)
     return " ".join(text.lower().split())
 
+def truncate(text, max_words=30):
+    return " ".join(text.split()[:max_words])
+
 def get_video_id(url: str):
-    reg = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
-    match = re.search(reg, url)
-    return match.group(1) if match else None
+    try:
+        if "youtu.be" in url:
+            return url.split("youtu.be/")[1].split("?")[0]
+        m = re.search(r"v=([0-9A-Za-z_-]{11})", url)
+        if m:
+            return m.group(1)
+        m = re.search(r"(shorts|live)/([0-9A-Za-z_-]{11})", url)
+        if m:
+            return m.group(2)
+    except:
+        return None
+    return None
+
+def get_video_title(video_id: str):
+    try:
+        r = youtube.videos().list(
+            part="snippet",
+            id=video_id
+        ).execute()
+        items = r.get("items", [])
+        if not items:
+            return "Unknown Title"
+        return items[0]["snippet"]["title"]
+    except:
+        return "Unknown Title"
 
 def classify_batch(batch):
     headers = {
         "Authorization": f"Bearer {HF_API_KEY}",
         "Content-Type": "application/json"
     }
-
-    response = requests.post(
+    response = session.post(
         HF_URL,
         headers=headers,
         json={"inputs": batch}
     )
-
     if response.status_code != 200:
-        raise Exception(f"HF API Error: {response.text}")
-
+        raise Exception(response.text)
     return response.json()
 
-def generate_conclusion(counts):
+def conclusion(counts):
     total = sum(counts.values())
-
     if total == 0:
         return "There is no comment data available for analysis."
+    perc = {k: (v / total) * 100 for k, v in counts.items()}
+    top = max(counts, key=counts.get)
+    pct = perc[top]
+    if pct >= 50:
+        if top == "Positive":
+            return f"The majority of users express positive sentiment ({pct:.1f}%), indicating that the video is generally well received."
+        if top == "Negative":
+            return f"The majority of users express negative sentiment ({pct:.1f}%), suggesting dissatisfaction with the video."
+        return f"The majority of users express neutral sentiment ({pct:.1f}%), indicating a generally moderate response."
+    return f"The sentiment distribution is mixed, with {top} being the most common at {pct:.1f}%."
 
-    percentages = {k: (v / total) * 100 for k, v in counts.items()}
-    max_label = max(counts, key=counts.get)
-    max_pct = percentages[max_label]
+@app.post("/signup")
+async def signup(req: AuthRequest):
+    if users_col.find_one({"email": req.email}):
+        raise HTTPException(status_code=400, detail="User already exists")
+    hashed = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt())
+    users_col.insert_one({
+        "email": req.email,
+        "username": req.username,
+        "password": hashed
+    })
+    return {
+        "email": req.email,
+        "username": req.username
+    }
 
-    if max_pct >= 50:
-        if max_label == "Positive":
-            return f"The majority of users express positive sentiment ({max_pct:.1f}%), indicating that the video is generally well received."
-        elif max_label == "Negative":
-            return f"The majority of users express negative sentiment ({max_pct:.1f}%), suggesting dissatisfaction with the video."
-        else:
-            return f"The majority of users express neutral sentiment ({max_pct:.1f}%), indicating a generally moderate response."
-    else:
-        return f"The sentiment distribution is mixed, with {max_label} being the most common at {max_pct:.1f}%."
+@app.post("/login")
+async def login(req: AuthRequest):
+    user = users_col.find_one({"email": req.email})
+    if not user or not bcrypt.checkpw(req.password.encode(), user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return {
+        "email": user["email"],
+        "username": user.get("username", "")
+    }
+
+@app.post("/save")
+async def save(req: SaveRequest):
+    title = get_video_title(req.videoId)
+    history_col.insert_one({
+        "user": req.user,
+        "videoId": req.videoId,
+        "title": title,
+        "result": req.result,
+        "createdAt": datetime.utcnow() + timedelta(hours=7)
+    })
+    return {"status": "ok"}
+
+@app.get("/history/{email}")
+async def get_history(email: str):
+    data = list(
+        history_col.find(
+            {"user": email},
+            {"_id": 0}
+        ).sort("createdAt", -1)
+    )
+    return data
 
 @app.post("/analyze")
-async def analyze_sentiment(request: URLRequest):
-    video_id = get_video_id(request.url)
-    if not video_id:
+async def analyze(req: URLRequest):
+    vid = get_video_id(req.url)
+    if not vid:
         raise HTTPException(status_code=400, detail="Invalid YouTube URL")
 
     try:
-        cleaned_comments = []
-        next_page_token = None
+        comments = []
+        token = None
 
         while True:
-            youtube_request = youtube.commentThreads().list(
+            r = youtube.commentThreads().list(
                 part="snippet",
-                videoId=video_id,
+                videoId=vid,
                 maxResults=100,
                 textFormat="plainText",
-                pageToken=next_page_token
-            )
-            response = youtube_request.execute()
+                pageToken=token
+            ).execute()
 
-            for item in response.get('items', []):
-                comment_text = item['snippet']['topLevelComment']['snippet']['textDisplay']
-                cleaned_text = clean_and_normalize(comment_text)
+            for item in r.get("items", []):
+                t = item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
+                c = truncate(clean(t), 30)
 
-                if cleaned_text:
-                    cleaned_comments.append(cleaned_text)
+                if c:
+                    comments.append(c)
 
-            next_page_token = response.get('nextPageToken')
-            if not next_page_token:
+                if len(comments) >= RAW_LIMIT:
+                    break
+
+            if len(comments) >= RAW_LIMIT:
                 break
 
-        if not cleaned_comments:
-            return {"status": "Empty", "message": "No valid comments found."}
+            token = r.get("nextPageToken")
+            if not token:
+                break
 
-        texts = cleaned_comments
+        if not comments:
+            return {
+                "status": "NoComments",
+                "message": "This video may not have accessible comments."
+            }
+
+        comments = random.sample(comments, min(MAX_COMMENTS, len(comments)))
+
         labels = []
         processed = []
 
-        batch_size = 5
-
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+        for i in range(0, len(comments), BATCH_SIZE):
+            batch = comments[i:i+BATCH_SIZE]
 
             try:
                 results = classify_batch(batch)
@@ -143,7 +238,7 @@ async def analyze_sentiment(request: URLRequest):
                 if not isinstance(results, list) or len(results) != len(batch):
                     raise Exception("Batch mismatch")
 
-                for j, text in enumerate(batch):
+                for j, t in enumerate(batch):
                     res = results[j]
 
                     if isinstance(res, dict):
@@ -151,59 +246,52 @@ async def analyze_sentiment(request: URLRequest):
 
                     top = max(res, key=lambda x: x["score"])
                     label = LABEL_INDEX.get(top["label"], "unknown")
-                    confidence = round(top["score"] * 100, 2)
+                    conf = round(top["score"] * 100, 2)
 
                     labels.append(label)
                     processed.append({
-                        "text": text,
+                        "text": t,
                         "label": label,
-                        "confidence": confidence
+                        "confidence": conf
                     })
 
             except:
-                for text in batch:
+                for t in batch:
                     try:
-                        single = classify_batch([text])[0]
+                        single = classify_batch([t])[0]
 
                         if isinstance(single, dict):
                             single = [single]
 
                         top = max(single, key=lambda x: x["score"])
                         label = LABEL_INDEX.get(top["label"], "unknown")
-                        confidence = round(top["score"] * 100, 2)
+                        conf = round(top["score"] * 100, 2)
 
                     except:
                         label = "unknown"
-                        confidence = 0
+                        conf = 0
 
                     labels.append(label)
                     processed.append({
-                        "text": text,
+                        "text": t,
                         "label": label,
-                        "confidence": confidence
+                        "confidence": conf
                     })
 
         counts = Counter(labels)
-        total = len(texts)
-
-        percentages = {
-            k: round((v / total) * 100, 2) for k, v in counts.items()
-        }
-
+        total = len(comments)
         overall = counts.most_common(1)[0][0]
-        conclusion = generate_conclusion(counts)
 
         return {
-            "video_id": video_id,
+            "video_id": vid,
             "summary": {
                 "total": total,
                 "overall": overall,
                 "counts": dict(counts),
-                "percentages": percentages,
-                "conclusion": conclusion
+                "conclusion": conclusion(counts)
             },
             "results": processed
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"API Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
