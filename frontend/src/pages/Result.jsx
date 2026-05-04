@@ -12,7 +12,6 @@ function Result() {
 
   const { videoId, result } = state
 
-  // ✅ support BOTH structures (backend + saved)
   const counts = result.counts || {
     Positive: result.Positive || 0,
     Negative: result.Negative || 0,
@@ -38,7 +37,6 @@ function Result() {
 
         <div className="result-box">
 
-          {/* VIDEO */}
           {videoId && (
             <iframe
               className="player"
@@ -49,7 +47,6 @@ function Result() {
 
           <hr />
 
-          {/* OVERALL */}
           <div className="overall-section">
             <img src={getIcon(sentiment)} className="emoji" />
             <div>
@@ -62,7 +59,6 @@ function Result() {
 
           <hr />
 
-          {/* BREAKDOWN */}
           <div className="breakdown">
             <p className="section-title">Sentiment Breakdown</p>
 
@@ -85,7 +81,6 @@ function Result() {
             ))}
           </div>
 
-          {/* SUMMARY */}
           <div className="summary">
             <p className="section-title">Summary</p>
             <p className="summary-section">{result.conclusion}</p>
