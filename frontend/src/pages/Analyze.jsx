@@ -93,7 +93,10 @@ function Analyze() {
 
     await fetch(`${API_URL}/save`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${user.token}`
+      },
       body: JSON.stringify({
         user: user.email,
         videoId,
