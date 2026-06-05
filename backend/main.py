@@ -56,9 +56,9 @@ LABEL_INDEX = {
     "LABEL_2": "Negative"
 }
 
-MAX_COMMENTS = 150
+MAX_COMMENTS = 300
 RAW_LIMIT = 500
-BATCH_SIZE = 5
+BATCH_SIZE = 20
 
 
 class URLRequest(BaseModel):
@@ -210,6 +210,17 @@ def conclusion(counts):
         return f"The majority of users express neutral sentiment ({pct:.1f}%), indicating a generally moderate response."
 
     return f"The sentiment distribution is mixed, with {top} being the most common at {pct:.1f}%."
+
+def normalize_results(results):
+
+    if (
+        isinstance(results, list)
+        and len(results) == 1
+        and isinstance(results[0], list)
+    ):
+        return results[0]
+
+    return results
 
 
 @app.post("/signup")
@@ -390,87 +401,65 @@ async def analyze(req: URLRequest):
         labels = []
         processed = []
 
+
         for i in range(0, len(comments), BATCH_SIZE):
 
-            batch = comments[i:i+BATCH_SIZE]
+            batch = comments[i:i + BATCH_SIZE]
 
-            try:
+            results = classify_batch(batch)
+            results = normalize_results(results)
 
-                results = classify_batch(batch)
+            # safety check
+            if not isinstance(results, list):
+                raise Exception("Invalid response format from model")
 
-                if not isinstance(results, list) or len(results) != len(batch):
-                    raise Exception("Batch mismatch")
+            if len(results) != len(batch):
+                raise Exception("Batch size mismatch from model output")
 
-                for j, t in enumerate(batch):
+            for text, res in zip(batch, results):
 
-                    res = results[j]
+                label = "unknown"
+                conf = 0
 
+                try:
+
+                    # normalize possible formats
                     if isinstance(res, dict):
                         res = [res]
 
-                    top = max(res, key=lambda x: x["score"])
-
-                    label = LABEL_INDEX.get(
-                        top["label"],
-                        "unknown"
-                    )
-
-                    conf = round(
-                        top["score"] * 100,
-                        2
-                    )
-
-                    labels.append(label)
-
-                    processed.append({
-                        "text": t,
-                        "label": label,
-                        "confidence": conf
-                    })
-
-            except:
-
-                for t in batch:
-
-                    try:
-
-                        single = classify_batch([t])[0]
-
-                        if isinstance(single, dict):
-                            single = [single]
+                    if isinstance(res, list) and len(res) > 0:
 
                         top = max(
-                            single,
-                            key=lambda x: x["score"]
+                            res,
+                            key=lambda x: x.get("score", 0)
                         )
 
-                        label = LABEL_INDEX.get(
-                            top["label"],
-                            "unknown"
-                        )
+                        raw_label = str(top.get("label", "")).upper()
+
+                        label = LABEL_INDEX.get(raw_label, "unknown")
 
                         conf = round(
-                            top["score"] * 100,
+                            float(top.get("score", 0)) * 100,
                             2
                         )
 
-                    except:
-                        label = "unknown"
-                        conf = 0
+                except:
+                    label = "unknown"
+                    conf = 0
 
-                    labels.append(label)
+                labels.append(label)
 
-                    processed.append({
-                        "text": t,
-                        "label": label,
-                        "confidence": conf
-                    })
+                processed.append({
+                    "text": text,
+                    "label": label,
+                    "confidence": conf
+                })
 
         counts = Counter(labels)
 
         total = len(comments)
 
-        overall = counts.most_common(1)[0][0]
+        overall = counts.most_common(1)[0][0] if counts else "unknown"
 
         return {
             "video_id": vid,
