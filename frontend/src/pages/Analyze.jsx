@@ -107,7 +107,26 @@ function Analyze() {
     setSaving(false)
     setSaved(true)
   }
-
+  
+  useEffect(() => {
+      if (location.state) {
+        const item = location.state
+  
+        setVideoId(item.videoId)
+  
+        const counts = item.result.counts || {}
+        const total = item.result.total || 0
+  
+        setResult({
+          sentiment: item.result.overall,
+          total,
+          conclusion: item.result.conclusion,
+          Positive: counts.Positive || 0,
+          Neutral: counts.Neutral || 0,
+          Negative: counts.Negative || 0,
+        })
+      }
+    }, [location.state])
  
 
   return (
