@@ -1,1 +1,1 @@
-export const API_URL = "https://senti-pr.up.railway.app";
+export const API_URL = "https://senti-pro.up.railway.app";
